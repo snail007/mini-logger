@@ -17,8 +17,8 @@ const (
 )
 
 var (
-	safe = &sync.WaitGroup{}
-	exit = false
+	flush = &sync.WaitGroup{}
+	exit  = false
 )
 
 type Writer interface {
@@ -61,7 +61,8 @@ type MiniLogger interface {
 	Errorln(v ...interface{})
 	Fatalln(v ...interface{})
 	AddWriter(w Writer, levels byte) MiniLogger
-	SetModeSafe(safe bool) MiniLogger
+	Safe() MiniLogger
+	Unsafe() MiniLogger
 }
 
 func (e *Entry) getLevelString() string {
@@ -104,17 +105,25 @@ func New(modeSafe bool) MiniLogger {
 //Flush wait for process all left entry
 func Flush() {
 	exit = true
-	safe.Wait()
+	flush.Wait()
 }
 
-//SetModeSafe when true : must call logger.Flush() in main defer
+//Safe : if you call Safe() , then you must call logger.Flush() in main defer
 //if not do that, may be lost message,but this mode has a highest performance
-//when false : each message can be processed , but this mode may be has  lower performance
-//beacuse of logger must wait for  all writers process done with each messsage.
-//note: if you do logging before call os.Exit(), you had better to set safeMode to true before call os.Exit().
-//you call call func SetModeSafe() in any where any time to switch mode.
-func (l *Logger) SetModeSafe(safe bool) MiniLogger {
-	l.modeSafe = safe
+//note: if you do logging before call os.Exit(), you had better to call Safe() before call os.Exit().
+//you call call func Safe() or Unsafe() in any where any time to switch safe mode.
+func (l *Logger) Safe() MiniLogger {
+	l.modeSafe = true
+	return l
+}
+
+//Unsafe : if you call Unsafe(), each message can be processed immediately,
+//but this mode may be has  lower performance,beacuse of logger must wait for
+//all writers process done with each messsage.
+//note: if you do logging before call os.Exit(), you had better to call Safe() before call os.Exit().
+//you call call func Safe() or Unsafe() in any where any time to switch safe mode.
+func (l *Logger) Unsafe() MiniLogger {
+	l.modeSafe = false
 	return l
 }
 func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
@@ -138,10 +147,10 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 	if FatalLevel&levels == FatalLevel {
 		l.writersMap[int(FatalLevel)] = append(l.writersMap[int(FatalLevel)], w)
 	}
-	safe.Add(1)
+	flush.Add(1)
 	go func() {
 		defer func() {
-			safe.Done()
+			flush.Done()
 		}()
 		for {
 			select {
