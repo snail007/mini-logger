@@ -25,6 +25,7 @@ var (
 type Fields map[string]string
 type Writer interface {
 	Write(e Entry)
+	Init()
 }
 
 type Logger struct {
@@ -187,6 +188,7 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 		defer func() {
 			flush.Done()
 		}()
+		w.writer.Init()
 		for {
 			select {
 			case entry, ok := <-w.chn:

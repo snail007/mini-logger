@@ -19,6 +19,9 @@ func NewDefaultConsoleWriter() *ConsoleWriter {
 		Format: "[{level}] [{date} {time}.{mili}] {fields} {text}",
 	}
 }
+func (w *ConsoleWriter) Init() {
+
+}
 func (w *ConsoleWriter) Write(e Entry) {
 	fg := color.New(color.FgHiWhite).SprintFunc()
 	switch e.Level {
