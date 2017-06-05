@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -21,16 +22,20 @@ var (
 	exit  = false
 )
 
+type Fields map[string]string
 type Writer interface {
 	Write(e Entry)
 }
 
 type Logger struct {
-	writersMap map[int][]*WrappedWriter
-	mu         sync.Mutex
-	modeSafe   bool
-	wait       sync.WaitGroup
+	writersMap   *map[int][]*WrappedWriter
+	mu           sync.Mutex
+	modeSafe     bool
+	wait         sync.WaitGroup
+	fields       Fields
+	fieldsString string
 }
+
 type WrappedWriter struct {
 	lock   *sync.Mutex
 	chn    chan Entry
@@ -43,30 +48,34 @@ type Entry struct {
 	Milliseconds          int64
 	TimestampMilliseconds int64
 	Level                 uint8
+	LevelString           string
+	Fields                map[string]string
+	FieldsString          string
 }
 type MiniLogger interface {
-	Debug(v ...interface{})
-	Info(v ...interface{})
-	Warn(v ...interface{})
-	Error(v ...interface{})
+	Debug(v ...interface{}) MiniLogger
+	Info(v ...interface{}) MiniLogger
+	Warn(v ...interface{}) MiniLogger
+	Error(v ...interface{}) MiniLogger
 	Fatal(v ...interface{})
-	Debugf(format string, v ...interface{})
-	Infof(format string, v ...interface{})
-	Warnf(format string, v ...interface{})
-	Errorf(format string, v ...interface{})
+	Debugf(format string, v ...interface{}) MiniLogger
+	Infof(format string, v ...interface{}) MiniLogger
+	Warnf(format string, v ...interface{}) MiniLogger
+	Errorf(format string, v ...interface{}) MiniLogger
 	Fatalf(format string, v ...interface{})
-	Debugln(v ...interface{})
-	Infoln(v ...interface{})
-	Warnln(v ...interface{})
-	Errorln(v ...interface{})
+	Debugln(v ...interface{}) MiniLogger
+	Infoln(v ...interface{}) MiniLogger
+	Warnln(v ...interface{}) MiniLogger
+	Errorln(v ...interface{}) MiniLogger
 	Fatalln(v ...interface{})
 	AddWriter(w Writer, levels byte) MiniLogger
 	Safe() MiniLogger
 	Unsafe() MiniLogger
+	With(fields Fields) MiniLogger
 }
 
-func (e *Entry) getLevelString() string {
-	switch e.Level {
+func getLevelString(level uint8) string {
+	switch level {
 	case DebugLevel:
 		return "DEBUG"
 	case InfoLevel:
@@ -87,12 +96,18 @@ func (e *Entry) getLevelString() string {
 //when false : each message can be processed , but this mode may be has a little lower performance
 //beacuse of logger must wait for  all writers process done with each messsage.
 //note: if you do logging before call os.Exit(), you had better to set safeMode to true before call os.Exit().
-func New(modeSafe bool) MiniLogger {
+//fields same as With()'s args,more about fields to see With().
+func New(modeSafe bool, fields Fields) MiniLogger {
+	if fields == nil {
+		fields = Fields{}
+	}
 	return &Logger{
-		mu:       sync.Mutex{},
-		modeSafe: modeSafe,
-		wait:     sync.WaitGroup{},
-		writersMap: map[int][]*WrappedWriter{
+		fields:       fields,
+		fieldsString: "",
+		mu:           sync.Mutex{},
+		modeSafe:     modeSafe,
+		wait:         sync.WaitGroup{},
+		writersMap: &map[int][]*WrappedWriter{
 			int(DebugLevel): []*WrappedWriter{},
 			int(InfoLevel):  []*WrappedWriter{},
 			int(WarnLevel):  []*WrappedWriter{},
@@ -106,6 +121,25 @@ func New(modeSafe bool) MiniLogger {
 func Flush() {
 	exit = true
 	flush.Wait()
+}
+
+//With return a new MiniLogger,which it's modeSafe inited same as caller MiniLogger,
+//and revecived levels  same as caller MiniLogger,
+//and set it's fields.
+//you can use it as a standard MiniLogger.
+func (l *Logger) With(fields Fields) MiniLogger {
+	for k, v := range l.fields {
+		fields[k] = v
+	}
+	s, _ := json.Marshal(fields)
+	return &Logger{
+		mu:           sync.Mutex{},
+		modeSafe:     l.modeSafe,
+		wait:         sync.WaitGroup{},
+		writersMap:   l.writersMap,
+		fields:       fields,
+		fieldsString: string(s),
+	}
 }
 
 //Safe : if you call Safe() , then you must call logger.Flush() in main defer
@@ -132,20 +166,21 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 		writer: writer,
 		chn:    make(chan Entry, 1024),
 	}
+	m := *l.writersMap
 	if DebugLevel&levels == DebugLevel {
-		l.writersMap[int(DebugLevel)] = append(l.writersMap[int(DebugLevel)], w)
+		m[int(DebugLevel)] = append(m[int(DebugLevel)], w)
 	}
 	if InfoLevel&levels == InfoLevel {
-		l.writersMap[int(InfoLevel)] = append(l.writersMap[int(InfoLevel)], w)
+		m[int(InfoLevel)] = append(m[int(InfoLevel)], w)
 	}
 	if WarnLevel&levels == WarnLevel {
-		l.writersMap[int(WarnLevel)] = append(l.writersMap[int(WarnLevel)], w)
+		m[int(WarnLevel)] = append(m[int(WarnLevel)], w)
 	}
 	if ErrorLevel&levels == ErrorLevel {
-		l.writersMap[int(ErrorLevel)] = append(l.writersMap[int(ErrorLevel)], w)
+		m[int(ErrorLevel)] = append(m[int(ErrorLevel)], w)
 	}
 	if FatalLevel&levels == FatalLevel {
-		l.writersMap[int(FatalLevel)] = append(l.writersMap[int(FatalLevel)], w)
+		m[int(FatalLevel)] = append(m[int(FatalLevel)], w)
 	}
 	flush.Add(1)
 	go func() {
@@ -156,10 +191,10 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 			select {
 			case entry, ok := <-w.chn:
 				if ok {
+					w.writer.Write(entry)
 					if l.modeSafe {
 						l.wait.Done()
 					}
-					w.writer.Write(entry)
 					if entry.Level == FatalLevel {
 						os.Exit(0)
 					}
@@ -189,19 +224,23 @@ func (l *Logger) callWriter(level byte, t, foramt string, v ...interface{}) {
 	default:
 		c = fmt.Sprint(v...)
 	}
-	for _, w := range l.writersMap[int(level)] {
+	m := *l.writersMap
+	for _, w := range m[int(level)] {
 		now := time.Now().UnixNano()
 		nowUnix := time.Now().Unix()
 		mili := (now / 1000000) - nowUnix*1000
-		if l.modeSafe {
-			l.wait.Add(1)
-		}
 		w.chn <- Entry{
 			Timestamp:             nowUnix,
 			TimestampMilliseconds: now / 10000000,
 			Milliseconds:          mili,
 			Content:               c,
 			Level:                 level,
+			LevelString:           getLevelString(level),
+			Fields:                l.fields,
+			FieldsString:          l.fieldsString,
+		}
+		if l.modeSafe {
+			l.wait.Add(1)
 		}
 	}
 	if l.modeSafe {
@@ -213,58 +252,70 @@ func (l *Logger) Fatal(v ...interface{}) {
 	l.callWriter(FatalLevel, "", "", v...)
 }
 
-func (l *Logger) Error(v ...interface{}) {
+func (l *Logger) Error(v ...interface{}) MiniLogger {
 	l.callWriter(ErrorLevel, "", "", v...)
+	return l
 }
 
-func (l *Logger) Warn(v ...interface{}) {
+func (l *Logger) Warn(v ...interface{}) MiniLogger {
 	l.callWriter(WarnLevel, "", "", v...)
+	return l
 }
 
-func (l *Logger) Info(v ...interface{}) {
+func (l *Logger) Info(v ...interface{}) MiniLogger {
 	l.callWriter(InfoLevel, "", "", v...)
+	return l
 }
 
-func (l *Logger) Debug(v ...interface{}) {
+func (l *Logger) Debug(v ...interface{}) MiniLogger {
 	l.callWriter(DebugLevel, "", "", v...)
+	return l
 }
 
 func (l *Logger) Fatalf(format string, v ...interface{}) {
 	l.callWriter(FatalLevel, "f", format, v...)
 }
 
-func (l *Logger) Errorf(format string, v ...interface{}) {
+func (l *Logger) Errorf(format string, v ...interface{}) MiniLogger {
 	l.callWriter(ErrorLevel, "f", format, v...)
+	return l
 }
 
-func (l *Logger) Warnf(format string, v ...interface{}) {
+func (l *Logger) Warnf(format string, v ...interface{}) MiniLogger {
 	l.callWriter(WarnLevel, "f", format, v...)
+	return l
 }
 
-func (l *Logger) Infof(format string, v ...interface{}) {
+func (l *Logger) Infof(format string, v ...interface{}) MiniLogger {
 	l.callWriter(InfoLevel, "f", format, v...)
+	return l
 }
 
-func (l *Logger) Debugf(format string, v ...interface{}) {
+func (l *Logger) Debugf(format string, v ...interface{}) MiniLogger {
 	l.callWriter(DebugLevel, "f", format, v...)
+	return l
 }
 
 func (l *Logger) Fatalln(v ...interface{}) {
 	l.callWriter(FatalLevel, "ln", "", v...)
 }
 
-func (l *Logger) Errorln(v ...interface{}) {
+func (l *Logger) Errorln(v ...interface{}) MiniLogger {
 	l.callWriter(ErrorLevel, "ln", "", v...)
+	return l
 }
 
-func (l *Logger) Warnln(v ...interface{}) {
+func (l *Logger) Warnln(v ...interface{}) MiniLogger {
 	l.callWriter(WarnLevel, "ln", "", v...)
+	return l
 }
 
-func (l *Logger) Infoln(v ...interface{}) {
+func (l *Logger) Infoln(v ...interface{}) MiniLogger {
 	l.callWriter(InfoLevel, "ln", "", v...)
+	return l
 }
 
-func (l *Logger) Debugln(v ...interface{}) {
+func (l *Logger) Debugln(v ...interface{}) MiniLogger {
 	l.callWriter(DebugLevel, "ln", "", v...)
+	return l
 }
