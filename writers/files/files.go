@@ -2,6 +2,7 @@ package files
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,8 +14,10 @@ import (
 
 	"compress/gzip"
 	"fmt"
-
 	"io/ioutil"
+	"strconv"
+
+	"path/filepath"
 
 	"github.com/snail007/mini-logger"
 )
@@ -83,6 +86,7 @@ func GetDefaultFileConfig() FileConfig {
 	}
 }
 func getFilePath(logPath, filename string) string {
+
 	return path.Join(logPath, filename+".log")
 
 }
@@ -131,39 +135,57 @@ func (w *FileWriter) Write(e logger.Entry) {
 				if stat, err := os.Stat(filepath); err == nil {
 					if stat.Size() > w.c.MaxBytes {
 						w.filePtrMap[filename].file.Close()
-						var i = 0
-						for {
-							if ok, err := exists(getFilePath(w.c.LogPath, fmt.Sprintf("%s.%d", filename, i))); (err == nil && !ok) || err != nil {
-								if err != nil {
-									fmt.Printf("ERROR fail to get stat of log file,%s", err)
-									return
-								}
+						var i = findI(w, filename)
+						var p = ""
+						if w.c.IsCompress {
+							p = path.Join(w.c.LogPath, fmt.Sprintf("%s.%d", filename, i)+".log.gz")
+						} else {
+							p = path.Join(w.c.LogPath, fmt.Sprintf("%s.%d", filename, i)+".log")
+						}
+						if ok, err := exists(p); (err == nil && !ok) || err != nil {
+							if err != nil {
+								fmt.Printf("ERROR fail to get stat of log file,%s", err)
+								return
+							}
+						}
+
+						for k := i - w.c.MaxCount; k >= 0; k-- {
+							p1 := getFilePath(w.c.LogPath, fmt.Sprintf("%s.%d", filename, k))
+							p2 := p1 + ".gz"
+							p1e, _ := exists(p1)
+							p2e, _ := exists(p2)
+							os.Remove(p1)
+							os.Remove(p2)
+							if !p1e && !p2e {
 								break
 							}
-							i++
 						}
+
 						newfilepath := getFilePath(w.c.LogPath, fmt.Sprintf("%s.%d", filename, i))
 						e := os.Rename(filepath, newfilepath)
 						if e != nil {
 							fmt.Printf("ERROR fail to Rename log file,%s", e)
 							return
 						}
-						go func() {
-							f, _ := os.OpenFile(newfilepath+".gz", os.O_CREATE|os.O_WRONLY, 0600)
-							rf, _ := os.OpenFile(newfilepath, os.O_RDONLY, 0600)
-							gz, err := gzip.NewWriterLevel(f, gzip.BestCompression)
-							b, _ := ioutil.ReadAll(rf)
-							if err == nil {
-								gz.Write(b)
-								gz.Flush()
-								gz.Close()
-								f.Close()
-								rf.Close()
-								os.Remove(newfilepath)
-							} else {
-								fmt.Printf("ERROR fail to compress log file,%s", err)
-							}
-						}()
+						if w.c.IsCompress {
+							go func() {
+								f, _ := os.OpenFile(newfilepath+".gz", os.O_CREATE|os.O_WRONLY, 0600)
+								rf, _ := os.OpenFile(newfilepath, os.O_RDONLY, 0600)
+								gz, err := gzip.NewWriterLevel(f, gzip.BestCompression)
+								b, _ := ioutil.ReadAll(rf)
+								if err == nil {
+									gz.Write(b)
+									gz.Flush()
+									gz.Close()
+									f.Close()
+									rf.Close()
+									os.Remove(newfilepath)
+								} else {
+									fmt.Printf("ERROR fail to compress log file,%s", err)
+								}
+							}()
+						}
+
 						f, e := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
 						if e != nil {
 							fmt.Println("ERROR fail to create log file")
@@ -189,4 +211,23 @@ func exists(path string) (bool, error) {
 		return false, nil
 	}
 	return true, err
+}
+func findI(w *FileWriter, filename string) int {
+	subfix := ""
+	if w.c.IsCompress {
+		subfix = ".gz"
+	}
+	p := w.c.LogPath + "/" + filename + ".*.log" + subfix
+	files, _ := filepath.Glob(p)
+	l := len(files)
+	if l == 0 {
+		return 0
+	}
+	re := regexp.MustCompile(filename + "\\.(\\d+)\\.log" + subfix)
+	matched := re.FindStringSubmatch(files[l-1])
+	if len(matched) == 2 {
+		i, _ := strconv.Atoi(matched[1])
+		return i + 1
+	}
+	return 0
 }
