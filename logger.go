@@ -25,7 +25,7 @@ var (
 type Fields map[string]string
 type Writer interface {
 	Write(e Entry)
-	Init()
+	Init() error
 }
 
 type Logger struct {
@@ -69,7 +69,7 @@ type MiniLogger interface {
 	Warnln(v ...interface{}) MiniLogger
 	Errorln(v ...interface{}) MiniLogger
 	Fatalln(v ...interface{})
-	AddWriter(w Writer, levels byte) MiniLogger
+	AddWriter(w Writer, levels uint8) MiniLogger
 	Safe() MiniLogger
 	Unsafe() MiniLogger
 	With(fields Fields) MiniLogger
@@ -80,9 +80,9 @@ func getLevelString(level uint8) string {
 	case DebugLevel:
 		return "DEBUG"
 	case InfoLevel:
-		return "INFO "
+		return "INFO"
 	case WarnLevel:
-		return "WARN "
+		return "WARN"
 	case ErrorLevel:
 		return "ERROR"
 	case FatalLevel:
@@ -188,7 +188,10 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 		defer func() {
 			flush.Done()
 		}()
-		w.writer.Init()
+		if err := w.writer.Init(); err != nil {
+			fmt.Printf("init writer fail,%s", err)
+			return
+		}
 		for {
 			select {
 			case entry, ok := <-w.chn:
