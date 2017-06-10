@@ -14,7 +14,7 @@ import (
 
 const (
 	T_JSON = iota
-	T_TEXT = iota
+	T_TEXT
 )
 
 type ConsoleWriterConfig struct {
@@ -26,7 +26,9 @@ type ConsoleWriter struct {
 }
 
 func New(config ConsoleWriterConfig) *ConsoleWriter {
-	return &ConsoleWriter{}
+	return &ConsoleWriter{
+		c: config,
+	}
 }
 func NewDefault() *ConsoleWriter {
 	return &ConsoleWriter{

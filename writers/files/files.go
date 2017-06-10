@@ -24,7 +24,7 @@ import (
 
 const (
 	T_JSON = iota
-	T_TEXT = iota
+	T_TEXT
 )
 
 type FileConfig struct {
