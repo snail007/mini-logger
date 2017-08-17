@@ -18,8 +18,8 @@ const (
 )
 
 var (
-	flush = &sync.WaitGroup{}
-	exit  = false
+	flush   = &sync.WaitGroup{}
+	exitchn = make(chan bool, 1)
 )
 
 type Fields map[string]string
@@ -120,7 +120,7 @@ func New(modeSafe bool, fields Fields) MiniLogger {
 
 //Flush wait for process all left entry
 func Flush() {
-	exit = true
+	exitchn <- true
 	flush.Wait()
 }
 
@@ -143,22 +143,23 @@ func (l *Logger) With(fields Fields) MiniLogger {
 	}
 }
 
-//Safe : if you call Safe() , then you must call logger.Flush() in main defer
+//Unsafe : if you call Unsafe() , then you must call logger.Flush() in main defer
 //if not do that, may be lost message,but this mode has a highest performance
 //note: if you do logging before call os.Exit(), you had better to call Safe() before call os.Exit().
 //you call call func Safe() or Unsafe() in any where any time to switch safe mode.
-func (l *Logger) Safe() MiniLogger {
-	l.modeSafe = true
+
+func (l *Logger) Unsafe() MiniLogger {
+	l.modeSafe = false
 	return l
 }
 
-//Unsafe : if you call Unsafe(), each message can be processed immediately,
+//Safe : if you call Safe(), each message can be processed immediately,
 //but this mode may be has  lower performance,beacuse of logger must wait for
 //all writers process done with each messsage.
 //note: if you do logging before call os.Exit(), you had better to call Safe() before call os.Exit().
-//you call call func Safe() or Unsafe() in any where any time to switch safe mode.
-func (l *Logger) Unsafe() MiniLogger {
-	l.modeSafe = false
+//you call func Safe() or Unsafe() in any where any time to switch safe mode.
+func (l *Logger) Safe() MiniLogger {
+	l.modeSafe = true
 	return l
 }
 func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
@@ -186,6 +187,7 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 	flush.Add(1)
 	go func() {
 		defer func() {
+			_ = recover()
 			flush.Done()
 		}()
 		if err := w.writer.Init(); err != nil {
@@ -206,7 +208,7 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 				} else {
 					return
 				}
-			default:
+			case exit := <-exitchn:
 				if exit {
 					return
 				}
