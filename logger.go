@@ -203,7 +203,7 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 						l.wait.Done()
 					}
 					if entry.Level == FatalLevel {
-						os.Exit(0)
+						time.AfterFunc(time.Millisecond*500, func() { os.Exit(0) })
 					}
 				} else {
 					return
