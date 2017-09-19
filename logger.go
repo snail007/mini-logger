@@ -203,7 +203,7 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 						l.wait.Done()
 					}
 					if entry.Level == FatalLevel {
-						time.AfterFunc(time.Millisecond*500, func() { os.Exit(0) })
+						os.Exit(0)
 					}
 				} else {
 					return
@@ -218,6 +218,9 @@ func (l *Logger) AddWriter(writer Writer, levels byte) MiniLogger {
 	return l
 }
 func (l *Logger) callWriter(level byte, t, foramt string, v ...interface{}) {
+	if level == FatalLevel {
+		l.Safe()
+	}
 	c := ""
 	if t == "f" && len(v) == 0 {
 		v = append(v, foramt)
