@@ -92,9 +92,9 @@ func getLevelString(level uint8) string {
 }
 
 // New returns a new logger
-//modeSafe when true : must call logger.Flush() in main defer
+//modeSafe when false : must call logger.Flush() in main defer
 //if not do that, may be lost message,but this mode has a highest performance
-//when false : each message can be processed , but this mode may be has a little lower performance
+//when true : each message can be processed , but this mode may be has a little lower performance
 //beacuse of logger must wait for  all writers process done with each messsage.
 //note: if you do logging before call os.Exit(), you had better to set safeMode to true before call os.Exit().
 //fields same as With()'s args,more about fields to see With().
